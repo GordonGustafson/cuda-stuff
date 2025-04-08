@@ -13,7 +13,7 @@ __global__ void matrix_multiplication_kernel(float const * const A,
                                              int const N) {
 
     __shared__ float AShared[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float BShared[COARSENING_FACTOR][TILE_WIDTH][TILE_WIDTH];
+    __shared__ float BShared[TILE_WIDTH][TILE_WIDTH];
     
     int const firstOutputCol = blockIdx.x * blockDim.x * COARSENING_FACTOR + threadIdx.x;
     int const outputRow = blockIdx.y * blockDim.y + threadIdx.y;
@@ -32,22 +32,22 @@ __global__ void matrix_multiplication_kernel(float const * const A,
         }
         for (int i = 0; i < COARSENING_FACTOR; i++) {
             if (tileIndex * TILE_WIDTH + threadIdx.y < K && firstOutputCol + i * TILE_WIDTH < N) {
-                BShared[i][threadIdx.y][threadIdx.x] = B[(tileIndex * TILE_WIDTH + threadIdx.y) * N + firstOutputCol + i * TILE_WIDTH];
+                BShared[threadIdx.y][threadIdx.x] = B[(tileIndex * TILE_WIDTH + threadIdx.y) * N + firstOutputCol + i * TILE_WIDTH];
             } else {
-                BShared[i][threadIdx.y][threadIdx.x] = 0.0f;
+                BShared[threadIdx.y][threadIdx.x] = 0.0f;
             }
-        }
 
-        __syncthreads();
+            __syncthreads();
 
-        // Multiply tiles
-        for (int indexInTile = 0; indexInTile < TILE_WIDTH; indexInTile++) {
-            for (int i = 0; i < COARSENING_FACTOR; i++) {
-                result[i] += AShared[threadIdx.y][indexInTile] * BShared[i][indexInTile][threadIdx.x];
+            // Multiply tiles
+            for (int indexInTile = 0; indexInTile < TILE_WIDTH; indexInTile++) {
+                for (int i = 0; i < COARSENING_FACTOR; i++) {
+                    result[i] += AShared[threadIdx.y][indexInTile] * BShared[indexInTile][threadIdx.x];
+                }
             }
-        }
 
-        __syncthreads();
+            __syncthreads();
+        }
     }
 
     for (int i = 0; i < COARSENING_FACTOR; i++) {
