@@ -11,6 +11,7 @@ __global__ void matrix_multiplication_kernel(float const * const A,
                                              int const M,
                                              int const K,
                                              int const N) {
+    // In this function K is the contraction dimension.
 
     __shared__ float AShared[TILE_WIDTH][TILE_WIDTH];
     __shared__ float BShared[TILE_WIDTH][TILE_WIDTH];
@@ -41,9 +42,7 @@ __global__ void matrix_multiplication_kernel(float const * const A,
 
             // Multiply tiles
             for (int indexInTile = 0; indexInTile < TILE_WIDTH; indexInTile++) {
-                for (int i = 0; i < COARSENING_FACTOR; i++) {
-                    result[i] += AShared[threadIdx.y][indexInTile] * BShared[indexInTile][threadIdx.x];
-                }
+                result[i] += AShared[threadIdx.y][indexInTile] * BShared[indexInTile][threadIdx.x];
             }
 
             __syncthreads();
@@ -59,8 +58,9 @@ __global__ void matrix_multiplication_kernel(float const * const A,
 
 // A, B, C are device pointers (i.e. pointers to memory on the GPU)
 void solve(float const* const A, float const* const B, float* const C, int M, int N, int K) {
+    // In this function N is the contraction dimension.
     dim3 threadsPerBlock(TILE_WIDTH, TILE_WIDTH);
-    dim3 blocksPerGrid((K + threadsPerBlock.x - 1) / (threadsPerBlock.x * COARSENING_FACTOR),
+    dim3 blocksPerGrid((K + threadsPerBlock.x * COARSENING_FACTOR - 1) / (threadsPerBlock.x * COARSENING_FACTOR),
                        (M + threadsPerBlock.y - 1) / threadsPerBlock.y);
     
     matrix_multiplication_kernel<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, M, N, K);
