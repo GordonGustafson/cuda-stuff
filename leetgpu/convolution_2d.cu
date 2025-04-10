@@ -4,16 +4,16 @@
 
 #define BLOCK_SIZE 32
 #define MAX_KERNEL_AREA (16 * 1024)
-#define cdiv(dividend, divisor) ((dividend + divisor - 1) / dividend)
+#define cdiv(dividend, divisor) ((dividend + divisor - 1) / (divisor))
 
 __constant__ float kernel_constant[MAX_KERNEL_AREA];
 
 __global__ void convolution_2d(float const* const input,
-                    float* const output,
-                    int const input_rows,
-                    int const input_cols,
-                    int const kernel_rows,
-                    int const kernel_cols) {
+                               float* const output,
+                               int const input_rows,
+                               int const input_cols,
+                               int const kernel_rows,
+                               int const kernel_cols) {
     int const row = blockIdx.y * blockDim.y + threadIdx.y;
     int const col = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -31,7 +31,14 @@ __global__ void convolution_2d(float const* const input,
         float result = 0.0f;
         for (int kernel_row = 0; kernel_row < kernel_rows; kernel_row++) {
             for (int kernel_col = 0; kernel_col < kernel_cols; kernel_col++) {
-                result += input_tile_shared[row + kernel_row][col + kernel_col] * kernel_constant[kernel_row * kernel_cols + kernel_col];
+                int const row_within_block = threadIdx.y + kernel_row;
+                int const col_within_block = threadIdx.x + kernel_col;
+                if (row_within_block < BLOCK_SIZE && col_within_block < BLOCK_SIZE) {
+                    result += input_tile_shared[row_within_block][col_within_block] * kernel_constant[kernel_row * kernel_cols + kernel_col];
+                } else {
+                    // If we're lucky this will be in cache due to other blocks having read it recently.
+                    result += input[(row + kernel_row) * input_cols + col + kernel_col] * kernel_constant[kernel_row * kernel_cols + kernel_col];
+                }
             }
         }
 
@@ -47,10 +54,14 @@ void solve(const float* input, const float* kernel, float* output,
         printf("Kernel is larger than MAX_KERNEL_AREA constant");
         return;
     }
-    cudaMemcpyToSymbol(kernel_constant, kernel, kernel_area * sizeof(float));
+    cudaError_t const err = cudaMemcpyToSymbol(kernel_constant, kernel, kernel_area * sizeof(float));
+    if (err != cudaSuccess) {
+        printf("cudaMemcpyToSymbol failed: %s\n", cudaGetErrorString(err));
+        return;
+    }
 
     dim3 const threadsPerBlock = dim3(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 const blocksPerGrid = dim3(cdiv(input_rows, threadsPerBlock.y),
-                                    cdiv(input_cols, threadsPerBlock.x));
+    dim3 const blocksPerGrid = dim3(cdiv(input_cols, threadsPerBlock.x),
+                                    cdiv(input_rows, threadsPerBlock.y));
     convolution_2d<<<blocksPerGrid, threadsPerBlock>>>(input, output, input_rows, input_cols, kernel_rows, kernel_cols);
 }
