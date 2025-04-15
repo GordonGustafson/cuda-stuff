@@ -33,23 +33,23 @@ __global__ void stencil_3d_thread_coarsening_kernel(float const* const in,
     bool const z_in_bounds = (z >= 0 && z < input_depth);
 
     if (x_in_bounds && y_in_bounds && z > 0 && z < input_depth) {
-        input_prev[y][x] = in[(z - 1) * input_rows * input_cols
-                              + y * input_cols
-                              + x];
+        input_prev[threadIdx.y][threadIdx.x] = in[(z - 1) * input_rows * input_cols
+                                                  + y * input_cols
+                                                  + x];
     }
     if (x_in_bounds && y_in_bounds && z_in_bounds) {
-        input_curr[y][x] = in[z * input_rows * input_cols
-                              + y * input_cols
-                              + x];
+        input_curr[threadIdx.y][threadIdx.x] = in[z * input_rows * input_cols
+                                                  + y * input_cols
+                                                  + x];
     }
 
     for (int z_offset = 0; z + z_offset < input_depth && z_offset < coarsening_factor; z_offset++) {
         int const zloop = z + z_offset;
         bool const zloop_in_bounds = (zloop >= 0 && zloop < input_depth);
         if (x_in_bounds && y_in_bounds && zloop + 1 < input_depth) {
-            input_next[y][x] = in[(zloop + 1) * input_rows * input_cols
-                                  + y * input_cols
-                                  + x];
+            input_next[threadIdx.y][threadIdx.x] = in[(zloop + 1) * input_rows * input_cols
+                                                      + y * input_cols
+                                                      + x];
         }
         __syncthreads();
 
@@ -63,13 +63,13 @@ __global__ void stencil_3d_thread_coarsening_kernel(float const* const in,
                                    || ((y == 0 || y == input_rows - 1) && x_in_bounds && zloop_in_bounds)
                                    || ((zloop == 0 || zloop == input_depth - 1) && x_in_bounds && y_in_bounds));
         if (is_internal_node) {
-            float const result = (c0 * input_curr[y][x]
-                                  + c1 * input_curr[y][x-1]
-                                  + c2 * input_curr[y][x+1]
-                                  + c3 * input_curr[y-1][x]
-                                  + c4 * input_curr[y+1][x]
-                                  + c5 * input_prev[y][x]
-                                  + c6 * input_next[y][x]);
+            float const result = (  c0 * input_curr[threadIdx.y][threadIdx.x]
+                                  + c1 * input_curr[threadIdx.y][threadIdx.x-1]
+                                  + c2 * input_curr[threadIdx.y][threadIdx.x+1]
+                                  + c3 * input_curr[threadIdx.y-1][threadIdx.x]
+                                  + c4 * input_curr[threadIdx.y+1][threadIdx.x]
+                                  + c5 * input_prev[threadIdx.y][threadIdx.x]
+                                  + c6 * input_next[threadIdx.y][threadIdx.x]);
             out[zloop * input_rows * input_cols
                 + y * input_cols
                 + x] = result;
@@ -79,13 +79,13 @@ __global__ void stencil_3d_thread_coarsening_kernel(float const* const in,
             int const offset = (zloop * input_rows * input_cols
                                 + y * input_cols
                                 + x);
-            out[offset] = input_curr[y][x];
+            out[offset] = input_curr[threadIdx.y][threadIdx.x];
         }
         __syncthreads();
 
         if (x_in_bounds && y_in_bounds) {
-            input_prev[y][x] = input_curr[y][x];
-            input_curr[y][x] = input_next[y][x];
+            input_prev[threadIdx.y][threadIdx.x] = input_curr[threadIdx.y][threadIdx.x];
+            input_curr[threadIdx.y][threadIdx.x] = input_next[threadIdx.y][threadIdx.x];
         }
     }
 }
