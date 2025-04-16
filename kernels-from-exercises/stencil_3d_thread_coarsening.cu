@@ -1,6 +1,6 @@
 #include <cuda_runtime.h>
 
-#define OUTPUT_TILE_WIDTH 6
+#define OUTPUT_TILE_WIDTH 30
 #define INPUT_TILE_WIDTH (OUTPUT_TILE_WIDTH + 2)
 #define CEIL_DIV(dividend, divisor) ((dividend + divisor - 1) / divisor)
 
@@ -26,15 +26,14 @@ __global__ void stencil_3d_thread_coarsening_kernel(float const* const in,
 
     int const x = blockIdx.x * OUTPUT_TILE_WIDTH + threadIdx.x - 1;
     int const y = blockIdx.y * OUTPUT_TILE_WIDTH + threadIdx.y - 1;
-    int const z = (blockIdx.z * OUTPUT_TILE_WIDTH + threadIdx.z) * coarsening_factor - 1;
+    int const z = blockIdx.z * coarsening_factor;
 
     bool const x_in_bounds = (x >= 0 && x < input_cols);
     bool const y_in_bounds = (y >= 0 && y < input_rows);
     bool const z_in_bounds = (z >= 0 && z < input_depth);
 
     bool const is_output_thread = (threadIdx.x > 0 && threadIdx.x < INPUT_TILE_WIDTH - 1
-                                   && threadIdx.y > 0 && threadIdx.y < INPUT_TILE_WIDTH - 1
-                                   && threadIdx.z > 0 && threadIdx.z < INPUT_TILE_WIDTH - 1);
+                                   && threadIdx.y > 0 && threadIdx.y < INPUT_TILE_WIDTH - 1);
 
     if (x_in_bounds && y_in_bounds && z > 0 && z < input_depth) {
         input_prev[threadIdx.y][threadIdx.x] = in[(z - 1) * input_rows * input_cols
@@ -105,10 +104,10 @@ void stencil_3d_thread_coarsening(float const* const in,
                                   float const c4,
                                   float const c5,
                                   float const c6) {
-    dim3 const threadsPerBlock(INPUT_TILE_WIDTH, INPUT_TILE_WIDTH, INPUT_TILE_WIDTH);
+    dim3 const threadsPerBlock(INPUT_TILE_WIDTH, INPUT_TILE_WIDTH, 1);
     dim3 const blocksPerGrid(CEIL_DIV(input_cols, OUTPUT_TILE_WIDTH),
                              CEIL_DIV(input_rows, OUTPUT_TILE_WIDTH),
-                             CEIL_DIV(input_depth, (OUTPUT_TILE_WIDTH * coarsening_factor)));
+                             CEIL_DIV(input_depth, coarsening_factor));
     stencil_3d_thread_coarsening_kernel<<<blocksPerGrid, threadsPerBlock>>>(in, out, input_depth, input_rows, input_cols,
                                                                             coarsening_factor, c0, c1, c2, c3, c4, c5, c6);
 }
