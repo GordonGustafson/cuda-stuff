@@ -32,6 +32,10 @@ __global__ void stencil_3d_thread_coarsening_kernel(float const* const in,
     bool const y_in_bounds = (y >= 0 && y < input_rows);
     bool const z_in_bounds = (z >= 0 && z < input_depth);
 
+    bool const is_output_thread = (threadIdx.x > 0 && threadIdx.x < INPUT_TILE_WIDTH - 1
+                                   && threadIdx.y > 0 && threadIdx.y < INPUT_TILE_WIDTH - 1
+                                   && threadIdx.z > 0 && threadIdx.z < INPUT_TILE_WIDTH - 1);
+
     if (x_in_bounds && y_in_bounds && z > 0 && z < input_depth) {
         input_prev[threadIdx.y][threadIdx.x] = in[(z - 1) * input_rows * input_cols
                                                   + y * input_cols
@@ -55,14 +59,11 @@ __global__ void stencil_3d_thread_coarsening_kernel(float const* const in,
 
         bool const is_internal_node = (x > 0 && x < input_cols - 1
                                        && y > 0 && y < input_rows - 1
-                                       && zloop > 0 && zloop < input_depth - 1
-                                       && threadIdx.x > 0 && threadIdx.x <= OUTPUT_TILE_WIDTH
-                                       && threadIdx.y > 0 && threadIdx.y <= OUTPUT_TILE_WIDTH
-                                       && threadIdx.z > 0 && threadIdx.z <= OUTPUT_TILE_WIDTH);
+                                       && zloop > 0 && zloop < input_depth - 1);
         bool const is_edge_node = (((x == 0 || x == input_cols - 1) && y_in_bounds && zloop_in_bounds)
                                    || ((y == 0 || y == input_rows - 1) && x_in_bounds && zloop_in_bounds)
                                    || ((zloop == 0 || zloop == input_depth - 1) && x_in_bounds && y_in_bounds));
-        if (is_internal_node) {
+        if (is_internal_node && is_output_thread) {
             float const result = (  c0 * input_curr[threadIdx.y][threadIdx.x]
                                   + c1 * input_curr[threadIdx.y][threadIdx.x-1]
                                   + c2 * input_curr[threadIdx.y][threadIdx.x+1]
@@ -75,7 +76,7 @@ __global__ void stencil_3d_thread_coarsening_kernel(float const* const in,
                 + x] = result;
         }
         // If it's on the boundary, copy the input into the output.
-        if (is_edge_node) {
+        if (is_edge_node && is_output_thread) {
             int const offset = (zloop * input_rows * input_cols
                                 + y * input_cols
                                 + x);
