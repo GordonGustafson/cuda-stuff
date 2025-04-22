@@ -15,7 +15,9 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 #define CEIL_DIV(dividend, divisor) (((dividend) + (divisor) - 1) / (divisor))
 
 
-unsigned int const maxInputsPerSolveCall = 2048;
+unsigned int const inputsPerThread = 2;
+unsigned int const maxThreadsPerBlock = 1024;
+unsigned int const maxInputsPerSolveCall = inputsPerThread * maxThreadsPerBlock;
 
 __global__ void sum_kernel(float const* const input,
                            float* const output,
@@ -23,10 +25,13 @@ __global__ void sum_kernel(float const* const input,
                            float* const buffer) {
     // X is the offset into buffer, not into input.
     int const x = blockIdx.x * blockDim.x + threadIdx.x;
-    int const bufferLength = (N + 1) / 2;
+    int const bufferLength = CEIL_DIV(N, inputsPerThread);
 
     if (x < bufferLength) {
-        buffer[x] = input[2 * x] + (2 * x + 1 < N ? input[2 * x + 1] : 0);
+        buffer[x] = input[inputsPerThread * x];
+        for (int i = 1; i < inputsPerThread && inputsPerThread * x + i < N; i++) {
+            buffer[x] += input[inputsPerThread * x + i];
+        }
     }
     __syncthreads();
 
@@ -49,23 +54,23 @@ void solve(float const* const input,
            int const N) {  
     if (N <= maxInputsPerSolveCall) {
         float* buffer;
-        gpuErrchk(cudaMalloc((void**)&buffer, ((N + 1) / 2) * sizeof(float)));
-        dim3 const threadsPerBlock = dim3(1024);
+        gpuErrchk(cudaMalloc((void**)&buffer, CEIL_DIV(N, inputsPerThread) * sizeof(float)));
+        dim3 const threadsPerBlock = dim3(maxThreadsPerBlock);
         // There should always be only 1 block.
-        dim3 const blocksPerGrid = dim3(CEIL_DIV(N, (2 * threadsPerBlock.x)));
+        dim3 const blocksPerGrid = dim3(CEIL_DIV(N, (inputsPerThread * threadsPerBlock.x)));
         sum_kernel<<<blocksPerGrid, threadsPerBlock>>>(input, output, N, buffer);
     } else {
         unsigned int const numSolveCalls = CEIL_DIV(N, maxInputsPerSolveCall); 
         float* solveCallOutputs;
         gpuErrchk(cudaMalloc((void**)&solveCallOutputs, numSolveCalls * sizeof(float)));
 
-        dim3 const threadsPerBlock = dim3(1024);
+        dim3 const threadsPerBlock = dim3(maxThreadsPerBlock);
         dim3 const blocksPerGrid = dim3(1);
         for (int numProcessedItems = 0; numProcessedItems < N; numProcessedItems += maxInputsPerSolveCall) {
             unsigned int callNumber = numProcessedItems / maxInputsPerSolveCall;
             unsigned int const numItemsForCall = min(maxInputsPerSolveCall, N - numProcessedItems);
             float* buffer;
-            gpuErrchk(cudaMalloc((void**)&buffer, ((numItemsForCall + 1) / 2) * sizeof(float)));
+            gpuErrchk(cudaMalloc((void**)&buffer, CEIL_DIV(numItemsForCall, inputsPerThread) * sizeof(float)));
             sum_kernel<<<blocksPerGrid, threadsPerBlock>>>(input + numProcessedItems,
                                                            solveCallOutputs + callNumber,
                                                            numItemsForCall,
