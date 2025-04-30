@@ -1,3 +1,4 @@
+
 #include "solve.h"
 #include <stdio.h>
 #include <cuda_runtime.h>
@@ -64,19 +65,29 @@ void solve(float const* const input,
         float* solveCallOutputs;
         gpuErrchk(cudaMalloc((void**)&solveCallOutputs, numSolveCalls * sizeof(float)));
 
+        cudaStream_t const* const streams = malloc(numSolveCalls * sizeof(cudaStream_t *));
         dim3 const threadsPerBlock = dim3(maxThreadsPerBlock);
         dim3 const blocksPerGrid = dim3(1);
         for (int numProcessedItems = 0; numProcessedItems < N; numProcessedItems += maxInputsPerSolveCall) {
             unsigned int callNumber = numProcessedItems / maxInputsPerSolveCall;
+            gpuErrchk(cudaStreamCreate(&(streams[callNumber])));
+            cudaSteam_t const* const stream = streams[callNumber];
             unsigned int const numItemsForCall = min(maxInputsPerSolveCall, N - numProcessedItems);
             float* buffer;
-            gpuErrchk(cudaMalloc((void**)&buffer, CEIL_DIV(numItemsForCall, inputsPerThread) * sizeof(float)));
-            sum_kernel<<<blocksPerGrid, threadsPerBlock>>>(input + numProcessedItems,
-                                                           solveCallOutputs + callNumber,
-                                                           numItemsForCall,
-                                                           buffer);
-            gpuErrchk(cudaFree(buffer));
+            gpuErrchk(cudaMallocAsync((void**)&buffer,
+                                      CEIL_DIV(numItemsForCall, inputsPerThread) * sizeof(float),
+                                      stream));
+            sum_kernel<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(input + numProcessedItems,
+                                                                      solveCallOutputs + callNumber,
+                                                                      numItemsForCall,
+                                                                      buffer);
+            gpuErrchk(cudaFreeAsync(buffer, stream));
         }
+
+        for (int i = 0; i < numSolveCalls; i++) {
+            gpuErrchk(cudaStreamSynchronize(streams[i]));
+        }
+
         solve(solveCallOutputs, output, numSolveCalls);
         gpuErrchk(cudaFree(solveCallOutputs));
     }
