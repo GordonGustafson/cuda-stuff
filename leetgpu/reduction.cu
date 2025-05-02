@@ -22,9 +22,10 @@ __global__ void solve_kernel(float const* const input,
     extern __shared__ float sharedBuffer[];
     sharedBuffer[threadIdx.x] = 0.0f;
 
-    int const firstElementIdx = 2 * blockIdx.x * blockDim.x + threadIdx.x;
+    int const threadsPerGrid = gridDim.x * blockDim.x;
+    int const firstElementIdx = blockIdx.x * blockDim.x + threadIdx.x;
     if (firstElementIdx < N) {
-        int const secondElementIndex = firstElementIdx + blockDim.x;
+        int const secondElementIndex = firstElementIdx + threadsPerGrid;
         sharedBuffer[threadIdx.x] = input[firstElementIdx] + (secondElementIndex < N ? input[secondElementIndex] : 0);
     }
 

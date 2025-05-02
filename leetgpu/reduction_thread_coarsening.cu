@@ -23,11 +23,12 @@ __global__ void solve_kernel(float const* const input,
     extern __shared__ float sharedBuffer[];
 
     float localSum = 0.0f;
-    int index = ELEMENTS_PER_THREAD * blockIdx.x * blockDim.x + threadIdx.x;
+    int const threadsPerGrid = gridDim.x * blockDim.x;
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
     for (int i = 0; i < ELEMENTS_PER_THREAD; i++) {
         if (index < N) {
             localSum += input[index];
-            index += blockDim.x;
+            index += threadsPerGrid;
         }
     }
     sharedBuffer[threadIdx.x] = localSum;
