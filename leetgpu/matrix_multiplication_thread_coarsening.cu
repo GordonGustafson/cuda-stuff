@@ -60,8 +60,8 @@ __global__ void matrix_multiplication_kernel(float const * const A,
 void solve(float const* const A, float const* const B, float* const C, int M, int N, int K) {
     // In this function N is the contraction dimension.
     dim3 threadsPerBlock(TILE_WIDTH, TILE_WIDTH);
-    dim3 blocksPerGrid((K + threadsPerBlock.x * COARSENING_FACTOR - 1) / (threadsPerBlock.x * COARSENING_FACTOR),
-                       (M + threadsPerBlock.y - 1) / threadsPerBlock.y);
+    dim3 blocksPerGrid(CEIL_DIV(K, threadsPerBlock.x * COARSENING_FACTOR),
+                       CEIL_DIV(M, threadsPerBlock.y));
     
     matrix_multiplication_kernel<<<blocksPerGrid, threadsPerBlock>>>(A, B, C, M, N, K);
     cudaDeviceSynchronize();
