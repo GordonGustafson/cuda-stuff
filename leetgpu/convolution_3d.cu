@@ -4,7 +4,7 @@
 
 #define TILE_WIDTH 8
 #define MAX_KERNEL_VOLUME (16 * 1024)
-#define CEIL_DIV(dividend, divisor) ((dividend + divisor - 1) / divisor)
+#define CEIL_DIV(dividend, divisor) (((dividend) + (divisor) - 1) / (divisor))
 
 __constant__ float kernel_constant[MAX_KERNEL_VOLUME];
 

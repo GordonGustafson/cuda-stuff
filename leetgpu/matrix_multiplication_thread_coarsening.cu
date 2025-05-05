@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 
 #define TILE_WIDTH 16
-#define CEIL_DIV(dividend, divisor) ((dividend + divisor - 1) / divisor)
+#define CEIL_DIV(dividend, divisor) (((dividend) + (divisor) - 1) / (divisor))
 #define COARSENING_FACTOR 2
 
 __global__ void matrix_multiplication_kernel(float const * const A,
