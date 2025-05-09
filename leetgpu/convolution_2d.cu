@@ -4,7 +4,7 @@
 
 #define BLOCK_SIZE 32
 #define MAX_KERNEL_AREA (16 * 1024)
-#define cdiv(dividend, divisor) ((dividend + divisor - 1) / (divisor))
+#define CEIL_DIV(dividend, divisor) (((dividend) + (divisor) - 1) / (divisor))
 
 __constant__ float kernel_constant[MAX_KERNEL_AREA];
 
@@ -61,7 +61,7 @@ void solve(const float* input, const float* kernel, float* output,
     }
 
     dim3 const threadsPerBlock = dim3(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 const blocksPerGrid = dim3(cdiv(input_cols, threadsPerBlock.x),
-                                    cdiv(input_rows, threadsPerBlock.y));
+    dim3 const blocksPerGrid = dim3(CEIL_DIV(input_cols, threadsPerBlock.x),
+                                    CEIL_DIV(input_rows, threadsPerBlock.y));
     convolution_2d<<<blocksPerGrid, threadsPerBlock>>>(input, output, input_rows, input_cols, kernel_rows, kernel_cols);
 }
