@@ -185,10 +185,39 @@ void solve(float const* const Q,  // size Mxd
                          CEIL_DIV(M, mmThreadsPerBlock.y));
     matrix_multiplication_kernel<Transpose::Transposed><<<mmBlocksPerGrid, mmThreadsPerBlock>>>(Q, K, S, M, d, N, sqrt((float)d));
 
-    softmax_across_cols_kernel<<<1024, M>>>(S, P, N);
+    softmax_across_cols_kernel<<<M, 1024>>>(S, P, N);
 
     mmThreadsPerBlock = dim3(TILE_WIDTH, TILE_WIDTH);
     mmBlocksPerGrid = dim3(CEIL_DIV(d, mmThreadsPerBlock.x * MM_COARSENING_FACTOR),
                            CEIL_DIV(M, mmThreadsPerBlock.y));
     matrix_multiplication_kernel<Transpose::Untransposed><<<mmBlocksPerGrid, mmThreadsPerBlock>>>(P, V, output, M, N, d, 1.0f);
+}
+
+int main() {
+    int const M = 2000;
+    int const N = 3000;
+    int const d = 4000;
+
+    int const QNumBytes = M * d * sizeof(float);
+    int const KNumBytes = N * d * sizeof(float);
+    int const VNumBytes = N * d * sizeof(float);
+    int const outputNumBytes = M * d * sizeof(float);
+
+    float *Q, *K, *V, *output;
+    gpuErrchk(cudaMalloc((void**)&Q, QNumBytes));
+    gpuErrchk(cudaMalloc((void**)&K, KNumBytes));
+    gpuErrchk(cudaMalloc((void**)&V, VNumBytes));
+    gpuErrchk(cudaMalloc((void**)&output, outputNumBytes));
+
+    int const zerosNumElements = std::max(M, N) * d;
+    float* zeros = new float[zerosNumElements]();
+    for (int i = 0; i < zerosNumElements; i++) {
+        zeros[i] = 0.0f;
+    }
+    gpuErrchk(cudaMemcpy(Q, zeros, QNumBytes, cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(K, zeros, KNumBytes, cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(V, zeros, VNumBytes, cudaMemcpyHostToDevice));
+
+    solve(Q, K, V, output, M, N, d);
+    cudaDeviceSynchronize();
 }
