@@ -6,7 +6,7 @@
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
-   if (code != cudaSuccess) 
+   if (code != cudaSuccess)
    {
       fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
       if (abort) exit(code);
@@ -18,6 +18,8 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 #define ALL_THREADS_IN_WARP_MASK 0xffffffffu
 #define THREADS_PER_WARP 32
 #define WARPS_PER_BLOCK 32
+
+#define COARSENING_FACTOR 13
 
 // From https://stackoverflow.com/a/17401122
 __device__ static float atomicMax(float* address, float val) {
@@ -35,8 +37,13 @@ __global__ void max_kernel(float const* const input,
                            float* const maxBuffer,
                            int const N) {
     float __shared__ sharedBuffer[WARPS_PER_BLOCK];
-    int const i = blockIdx.x * blockDim.x + threadIdx.x;
-    float localMax = (i < N) ? input[i] : -INFINITY;
+    int const index = blockIdx.x * blockDim.x + threadIdx.x;
+    float localMax = (index < N) ? input[index] : -INFINITY;
+
+    int const threadsPerGrid = gridDim.x * blockDim.x;
+    for (int nextElementIndex = index + threadsPerGrid; nextElementIndex < N; nextElementIndex += threadsPerGrid) {
+        localMax = ::fmax(localMax, input[nextElementIndex]);
+    }
 
     for (int numActiveThreadsInWarp = THREADS_PER_WARP / 2; numActiveThreadsInWarp >= 1; numActiveThreadsInWarp /= 2) {
         localMax = ::fmax(localMax, __shfl_down_sync(ALL_THREADS_IN_WARP_MASK, localMax, numActiveThreadsInWarp));
@@ -66,8 +73,15 @@ __global__ void sum_exp_minus_max_kernel(float const* const input,
                                          float* const sumBuffer,
                                          int const N) {
     float __shared__ sharedBuffer[WARPS_PER_BLOCK];
-    int const i = blockIdx.x * blockDim.x + threadIdx.x;
-    float localSum = (i < N) ? expf(input[i] - *maxBuffer) : 0.0f;
+    int const index = blockIdx.x * blockDim.x + threadIdx.x;
+    float const globalMax = *maxBuffer;
+    float localSum = (index < N) ? expf(input[index] - globalMax) : 0.0f;
+
+
+    int const threadsPerGrid = gridDim.x * blockDim.x;
+    for (int nextElementIndex = index + threadsPerGrid; nextElementIndex < N; nextElementIndex += threadsPerGrid) {
+        localSum += expf(input[nextElementIndex] - globalMax);
+    }
 
     for (int numActiveThreads = THREADS_PER_WARP / 2; numActiveThreads >= 1; numActiveThreads /= 2) {
         localSum += __shfl_down_sync(ALL_THREADS_IN_WARP_MASK, localSum, numActiveThreads);
@@ -97,11 +111,15 @@ __global__ void softmax_kernel(float const* const input,
                                float* const maxBuffer,
                                float* const sumBuffer,
                                int const N) {
-    int const i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < N) {
-        float const x_i = input[i];
-        float const exp_x_i_minus_max = expf(x_i - *maxBuffer);
-        output[i] = exp_x_i_minus_max / *sumBuffer;
+    float const globalMax = *maxBuffer;
+    float const globalSum = *sumBuffer;
+
+    int const index = blockIdx.x * blockDim.x + threadIdx.x;
+    int const threadsPerGrid = gridDim.x * blockDim.x;
+    for (int nextElementIndex = index; nextElementIndex < N; nextElementIndex += threadsPerGrid) {
+        float const x_i = input[nextElementIndex];
+        float const exp_x_i_minus_max = expf(x_i - globalMax);
+        output[nextElementIndex] = exp_x_i_minus_max / globalSum;
     }
 }
 
@@ -120,7 +138,7 @@ void solve(const float* input, float* output, int N) {
     gpuErrchk(cudaMemcpy(sumBuffer_d, zeroArray, 1 * sizeof(float), cudaMemcpyHostToDevice));
 
     int threadsPerBlock = 1024;
-    int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
+    int blocksPerGrid = CEIL_DIV(N, threadsPerBlock * COARSENING_FACTOR);
     max_kernel<<<blocksPerGrid, threadsPerBlock>>>(input, maxBuffer_d, N);
     sum_exp_minus_max_kernel<<<blocksPerGrid, threadsPerBlock>>>(input, maxBuffer_d, sumBuffer_d, N);
     softmax_kernel<<<blocksPerGrid, threadsPerBlock>>>(input, output, maxBuffer_d, sumBuffer_d, N);

@@ -6,7 +6,7 @@
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
 {
-    if (code != cudaSuccess) 
+    if (code != cudaSuccess)
         {
             fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
             if (abort) exit(code);
@@ -61,7 +61,8 @@ __global__ void max_and_sum_kernel(float const* const input,
                                    unsigned long long int* const maxAndSumBuffer,
                                    int const N) {
     float __shared__ sharedMax[WARPS_PER_BLOCK];
-    float __shared__ sharedSum[WARPS_PER_BLOCK];
+    float __shared__ sharedSumWithBankConflicts[WARPS_PER_BLOCK+1];
+    float* sharedSum = &sharedSumWithBankConflicts[1];
     int const i = blockIdx.x * blockDim.x + threadIdx.x;
     float localMax = (i < N) ? input[i] : -INFINITY;
     // float localSum = (i < N) ? expf(input[i] - localMax) : 0.0f;
