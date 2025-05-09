@@ -31,9 +31,9 @@ __global__ void convolution_3d(float const* const input,
     if (x < input_cols
         && y < input_rows
         && z < input_depth) {
-        inputShared[z][y][x] = input[z * input_rows * input_cols
-                                     + y * input_cols
-                                     + x];
+        inputShared[threadIdx.z][threadIdx.y][threadIdx.x] = input[z * input_rows * input_cols
+                                                                   + y * input_cols
+                                                                   + x];
     }
 
     __syncthreads();
@@ -81,6 +81,7 @@ void solve(float const* const input,
         return;
     }
 
+    // TODO: try making this cudaMemcpyToSymbolAsync?
     cudaError_t const err = cudaMemcpyToSymbol(kernel_constant, kernel, kernel_volume * sizeof(float));
     if (err != cudaSuccess) {
         printf("cudaMemcpyToSymbol failed: %s\n", cudaGetErrorString(err));
