@@ -28,7 +28,8 @@ __global__ void matrix_multiplication_kernel(float const * const A,
                                              float * const C,
                                              int const M,
                                              int const K,
-                                             int const N) {
+                                             int const N,
+                                             float const scaleFactor) {
     // K is the contraction dimension.
     __shared__ float AShared[TILE_WIDTH][TILE_WIDTH];
     __shared__ float BShared[TILE_WIDTH][TILE_WIDTH];
@@ -72,7 +73,7 @@ __global__ void matrix_multiplication_kernel(float const * const A,
 
     for (int i = 0; i < MM_COARSENING_FACTOR; i++) {
         if (outputRow < M && firstOutputCol + i * TILE_WIDTH < N) {
-            C[outputRow * N + firstOutputCol + i * TILE_WIDTH] = result[i];
+            C[outputRow * N + firstOutputCol + i * TILE_WIDTH] = result[i] / scaleFactor;
         }
     }
 }
@@ -88,23 +89,21 @@ __global__ void matrix_multiplication_kernel(float const * const A,
 __device__ static inline float onlineSoftmaxSum(float const maxA,
                                                 float const sumA,
                                                 float const maxB,
-                                                float const sumB,
-                                                float const temperature) {
+                                                float const sumB) {
     if (sumA == 0.0f) {
         return sumB;
     } else if (sumB == 0.0f) {
         return sumA;
     } else if (maxA > maxB) {
-        return sumB * expf((maxB / temperature) - maxA) + sumA;
+        return sumB * expf(maxB - maxA) + sumA;
     } else {
-        return sumB + sumA * expf((maxA / temperature) - maxB);
+        return sumB + sumA * expf(maxA - maxB);
     }
 }
 
 __global__ void softmax_across_cols_kernel(float const* const input,
                                            float* const output,
-                                           int const cols,
-                                           float const temperature) {
+                                           int const cols) {
     float __shared__ globalMaxAndSum[2];
     float __shared__ sharedMax[WARPS_PER_BLOCK];
     float __shared__ sharedSumWithBankConflicts[WARPS_PER_BLOCK+1];
@@ -117,7 +116,7 @@ __global__ void softmax_across_cols_kernel(float const* const input,
     for (int nextElementIndex = threadIdx.x + threadsPerBlock; nextElementIndex < cols; nextElementIndex += threadsPerBlock) {
         float const incomingMax = input[blockIdx.x * cols + nextElementIndex];
         float const incomingSum = 1.0f;
-        localSum = onlineSoftmaxSum(localMax, localSum, incomingMax, incomingSum, temperature);
+        localSum = onlineSoftmaxSum(localMax, localSum, incomingMax, incomingSum);
         localMax = ::fmax(localMax, incomingMax);
     }
 
@@ -125,7 +124,7 @@ __global__ void softmax_across_cols_kernel(float const* const input,
     for (int numActiveThreadsInWarp = THREADS_PER_WARP / 2; numActiveThreadsInWarp >= 1; numActiveThreadsInWarp /= 2) {
         float const incomingMax = __shfl_down_sync(ALL_THREADS_IN_WARP_MASK, localMax, numActiveThreadsInWarp);
         float const incomingSum = __shfl_down_sync(ALL_THREADS_IN_WARP_MASK, localSum, numActiveThreadsInWarp);
-        localSum = onlineSoftmaxSum(localMax, localSum, incomingMax, incomingSum, temperature);
+        localSum = onlineSoftmaxSum(localMax, localSum, incomingMax, incomingSum);
         localMax = ::fmax(localMax, incomingMax);
     }
     int const warpIdx = threadIdx.x / THREADS_PER_WARP;
@@ -145,7 +144,7 @@ __global__ void softmax_across_cols_kernel(float const* const input,
         for (int numActiveThreadsInWarp = THREADS_PER_WARP / 2; numActiveThreadsInWarp >= 1; numActiveThreadsInWarp /= 2) {
             float const incomingMax = __shfl_down_sync(ALL_THREADS_IN_WARP_MASK, localMax, numActiveThreadsInWarp);
             float const incomingSum = __shfl_down_sync(ALL_THREADS_IN_WARP_MASK, localSum, numActiveThreadsInWarp);
-            localSum = onlineSoftmaxSum(localMax, localSum, incomingMax, incomingSum, temperature);
+            localSum = onlineSoftmaxSum(localMax, localSum, incomingMax, incomingSum);
             localMax = ::fmax(localMax, incomingMax);
         }
 
@@ -155,12 +154,14 @@ __global__ void softmax_across_cols_kernel(float const* const input,
         }
     }
 
+    __syncthreads();
+
     float const globalMax = globalMaxAndSum[MAX_INDEX];
     float const globalSum = globalMaxAndSum[SUM_INDEX];
 
     for (int nextElementIndex = threadIdx.x; nextElementIndex < cols; nextElementIndex += threadsPerBlock) {
         float const x_i = input[blockIdx.x * cols + nextElementIndex];
-        float const exp_x_i_minus_max = expf((x_i - globalMax) / temperature);
+        float const exp_x_i_minus_max = expf(x_i - globalMax);
         output[blockIdx.x * cols + nextElementIndex] = exp_x_i_minus_max / globalSum;
     }
 }
@@ -182,12 +183,12 @@ void solve(float const* const Q,  // size Mxd
     dim3 mmThreadsPerBlock(TILE_WIDTH, TILE_WIDTH);
     dim3 mmBlocksPerGrid(CEIL_DIV(N, mmThreadsPerBlock.x * MM_COARSENING_FACTOR),
                          CEIL_DIV(M, mmThreadsPerBlock.y));
-    matrix_multiplication_kernel<Transpose::Transposed><<<mmBlocksPerGrid, mmThreadsPerBlock>>>(Q, K, S, M, d, N);
+    matrix_multiplication_kernel<Transpose::Transposed><<<mmBlocksPerGrid, mmThreadsPerBlock>>>(Q, K, S, M, d, N, sqrt((float)d));
 
-    softmax_across_cols_kernel<<<1024, M>>>(S, P, N, sqrt((float)d));
+    softmax_across_cols_kernel<<<1024, M>>>(S, P, N);
 
     mmThreadsPerBlock = dim3(TILE_WIDTH, TILE_WIDTH);
     mmBlocksPerGrid = dim3(CEIL_DIV(d, mmThreadsPerBlock.x * MM_COARSENING_FACTOR),
                            CEIL_DIV(M, mmThreadsPerBlock.y));
-    matrix_multiplication_kernel<Transpose::Untransposed><<<mmBlocksPerGrid, mmThreadsPerBlock>>>(P, V, output, M, N, d);
+    matrix_multiplication_kernel<Transpose::Untransposed><<<mmBlocksPerGrid, mmThreadsPerBlock>>>(P, V, output, M, N, d, 1.0f);
 }
