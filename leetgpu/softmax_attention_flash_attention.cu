@@ -44,8 +44,8 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
                                        float* const row_max_HBM,
                                        int const maxSharedMemory) {
     extern __shared__ float sharedMemory[];
-    int const B_c = min(CEIL_DIV(maxSharedMemory, 4*d), N);
-    int const B_r = min(CEIL_DIV(maxSharedMemory, 4*d), d);
+    int const B_c = min(CEIL_DIV(maxSharedMemory, 4 * d * sizeof(float)), (unsigned long)N);
+    int const B_r = min(CEIL_DIV(maxSharedMemory, 4 * d * sizeof(float)), (unsigned long)d);
     int const T_c = CEIL_DIV(N, B_c);
 
     float* const Q = sharedMemory;
@@ -138,8 +138,8 @@ void solve(float const* const Q,  // size Mxd
     gpuErrchk(cudaDeviceGetAttribute(&maxSharedMemory, cudaDevAttrMaxSharedMemoryPerBlock, 0));
     gpuErrchk(cudaFuncSetAttribute(flash_attention_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, maxSharedMemory));
 
-    int const B_c = CEIL_DIV(maxSharedMemory, 4*d);
-    int const B_r = std::min(B_c, d);
+    int const B_c = min(CEIL_DIV(maxSharedMemory, 4 * d * sizeof(float)), (unsigned long)N);
+    int const B_r = min(CEIL_DIV(maxSharedMemory, 4 * d * sizeof(float)), (unsigned long)d);
     int const T_r = CEIL_DIV(M, B_r);
 
     std::cout << "maxSharedMemory: " << maxSharedMemory << std::endl;
@@ -163,7 +163,7 @@ void solve(float const* const Q,  // size Mxd
     float const temperature = sqrt(d);
 
     dim3 const blocksPerGrid(T_r);
-    dim3 const threadsPerBlock(std::min(B_c, N));
+    dim3 const threadsPerBlock(B_c);
     flash_attention_kernel<<<blocksPerGrid, threadsPerBlock, maxSharedMemory>>>(Q, K, V, output, M, N, d, temperature, row_sum_HBM, row_max_HBM, maxSharedMemory);
     gpuErrchk(cudaPeekAtLastError());
 }
@@ -180,14 +180,13 @@ void print_matrix(const float* mat, int M, int d) {
 }
 
 int main() {
-    // Input data
-    float Q_host[] = {1, 0, 0, 0, 0, 1, 0, 0};               // M=2, d=4
-    float K_host[] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};   // N=3, d=4
-    float V_host[] = {1,  2,  3,  4,
-                      5,  6,  7,  8,
-                      9, 10, 11, 12};                        // N=3, d=4
+    const int M = 2000, N = 3000, d = 1024;
 
-    const int M = 2, N = 3, d = 4;
+    // Input data
+    float* const Q_host = new float[M*d]();
+    float* const K_host = new float[N*d]();
+    float* const V_host = new float[N*d]();
+
     const size_t size_Q = M * d * sizeof(float);
     const size_t size_KV = N * d * sizeof(float);
     const size_t size_O = size_Q;
@@ -210,7 +209,7 @@ int main() {
     cudaDeviceSynchronize();
 
     // Copy result back
-    float O_host[M * d];
+    float* const O_host = new float[M * d]();
     cudaMemcpy(O_host, O_dev, size_O, cudaMemcpyDeviceToHost);
 
     // Print output
