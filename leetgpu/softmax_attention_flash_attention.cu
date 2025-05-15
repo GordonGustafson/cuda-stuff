@@ -61,7 +61,10 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
     // Load Q, using threadIdx.x to help along the d dimension
     for (int d_index = threadIdx.x; d_index < d; d_index += blockDim.x) {
         for (int B_r_index = 0; B_r_index < B_r; B_r_index++) {
-            Q[B_r_index * d + d_index] = Q_HBM[blockIdx.x * d * B_r + B_r_index * d + d_index];
+            int const rowIndex = blockIdx.x * B_r + B_r_index;
+            if (rowIndex < M) {
+                Q[B_r_index * d + d_index] = Q_HBM[rowIndex * d + d_index];
+            }
         }
     }
 
@@ -70,8 +73,11 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
         // Load K and V
         for (int d_index = threadIdx.x; d_index < d; d_index += blockDim.x) {
             for (int B_c_index = 0; B_c_index < B_c; B_c_index++) {
-                K[B_c_index * d + d_index] = K_HBM[T_c_index * d * B_c + B_c_index * d + d_index];
-                V[B_c_index * d + d_index] = V_HBM[T_c_index * d * B_c + B_c_index * d + d_index];
+                int const rowIndex = T_c_index * B_c + B_c_index;
+                if (rowIndex < N) {
+                    K[B_c_index * d + d_index] = K_HBM[rowIndex * d + d_index];
+                    V[B_c_index * d + d_index] = V_HBM[rowIndex * d + d_index];
+                }
             }
         }
 
@@ -118,8 +124,11 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
                     PV_val += P_val * V[V_B_c_index * d + d_index];
                 }
 
-                int const OIndexForThread = blockIdx.x * d * B_r + B_r_index * d + d_index;
-                O_HBM[OIndexForThread] = O_HBM[OIndexForThread] * expf(S_row_old_global_max - S_row_new_global_max) * (S_row_old_global_sum / S_row_new_global_sum) + PV_val;
+                int const rowIndex = blockIdx.x * B_r + B_r_index;
+                if (rowIndex < M) {
+                    int const OIndexForThread = rowIndex * d + d_index;
+                    O_HBM[OIndexForThread] = O_HBM[OIndexForThread] * expf(S_row_old_global_max - S_row_new_global_max) * (S_row_old_global_sum / S_row_new_global_sum) + PV_val;
+                }
             }
         }
     }
@@ -166,6 +175,9 @@ void solve(float const* const Q,  // size Mxd
     dim3 const threadsPerBlock(B_c);
     flash_attention_kernel<<<blocksPerGrid, threadsPerBlock, maxSharedMemory>>>(Q, K, V, output, M, N, d, temperature, row_sum_HBM, row_max_HBM, maxSharedMemory);
     gpuErrchk(cudaPeekAtLastError());
+
+    delete[] zeroFloats;
+    delete[] negativeInfinityFloats;
 }
 
 
