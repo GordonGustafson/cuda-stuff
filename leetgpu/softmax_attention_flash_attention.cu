@@ -61,9 +61,9 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
     // Load Q, using threadIdx.x to help along the d dimension
     for (int d_index = threadIdx.x; d_index < d; d_index += blockDim.x) {
         for (int B_r_index = 0; B_r_index < B_r; B_r_index++) {
-            int const rowIndex = blockIdx.x * B_r + B_r_index;
-            if (rowIndex < M) {
-                Q[B_r_index * d + d_index] = Q_HBM[rowIndex * d + d_index];
+            int const row_index = blockIdx.x * B_r + B_r_index;
+            if (row_index < M) {
+                Q[B_r_index * d + d_index] = Q_HBM[row_index * d + d_index];
             }
         }
     }
@@ -73,10 +73,10 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
         // Load K and V
         for (int d_index = threadIdx.x; d_index < d; d_index += blockDim.x) {
             for (int B_c_index = 0; B_c_index < B_c; B_c_index++) {
-                int const rowIndex = T_c_index * B_c + B_c_index;
-                if (rowIndex < N) {
-                    K[B_c_index * d + d_index] = K_HBM[rowIndex * d + d_index];
-                    V[B_c_index * d + d_index] = V_HBM[rowIndex * d + d_index];
+                int const row_index = T_c_index * B_c + B_c_index;
+                if (row_index < N) {
+                    K[B_c_index * d + d_index] = K_HBM[row_index * d + d_index];
+                    V[B_c_index * d + d_index] = V_HBM[row_index * d + d_index];
                 }
             }
         }
@@ -92,8 +92,8 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
             S[B_r_index * B_c + threadIdx.x] = S_val_for_thread / temperature;
 
             int const row_index = blockIdx.x * B_r + B_r_index;
-            float const S_row_old_global_max = row_max_HBM[row_index];
-            float const S_row_old_global_sum = row_sum_HBM[row_index];
+            float const S_row_old_global_max = (row_index < M) ? row_max_HBM[row_index] : -INFINITY;
+            float const S_row_old_global_sum = (row_index < M) ? row_sum_HBM[row_index] : 0.0f;
             __syncthreads();
 
             // Update max and sum for this row.
@@ -105,15 +105,17 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
                     S_row_local_sum = onlineSoftmaxSum(S_row_local_max, S_row_local_sum, S_val_iter, 1.0f);
                     S_row_local_max = max(S_row_local_max, S_val_iter);
                 }
-                row_sum_HBM[row_index] = onlineSoftmaxSum(S_row_old_global_max, 
-                                                          S_row_old_global_sum,
-                                                          S_row_local_max,
-                                                          S_row_local_sum);
-                row_max_HBM[row_index] = max(S_row_old_global_max, S_row_local_max);
+                if (row_index < M) {
+                    row_sum_HBM[row_index] = onlineSoftmaxSum(S_row_old_global_max,
+                                                              S_row_old_global_sum,
+                                                              S_row_local_max,
+                                                              S_row_local_sum);
+                    row_max_HBM[row_index] = max(S_row_old_global_max, S_row_local_max);
+                }
             }
             __syncthreads();
-            float const S_row_new_global_max = row_max_HBM[row_index];
-            float const S_row_new_global_sum = row_sum_HBM[row_index];
+            float const S_row_new_global_max = (row_index < M) ? row_max_HBM[row_index] : -INFINITY;
+            float const S_row_new_global_sum = (row_index < M) ? row_sum_HBM[row_index] : 0.0f;
 
             // Compute P and O
             for (int d_index = threadIdx.x; d_index < d; d_index += blockDim.x) {
@@ -124,9 +126,9 @@ __global__ void flash_attention_kernel(float const* const Q_HBM,  // size Mxd
                     PV_val += P_val * V[V_B_c_index * d + d_index];
                 }
 
-                int const rowIndex = blockIdx.x * B_r + B_r_index;
-                if (rowIndex < M) {
-                    int const OIndexForThread = rowIndex * d + d_index;
+                int const row_index = blockIdx.x * B_r + B_r_index;
+                if (row_index < M) {
+                    int const OIndexForThread = row_index * d + d_index;
                     O_HBM[OIndexForThread] = O_HBM[OIndexForThread] * expf(S_row_old_global_max - S_row_new_global_max) * (S_row_old_global_sum / S_row_new_global_sum) + PV_val;
                 }
             }
