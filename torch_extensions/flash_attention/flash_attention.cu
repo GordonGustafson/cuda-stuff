@@ -224,11 +224,9 @@ TORCH_LIBRARY(flash_attention, m) {
    m.def("flash_attention_wrapper(Tensor a, Tensor b, Tensor c) -> Tensor");
  }
 
-/*
 TORCH_LIBRARY_IMPL(flash_attention, CPU, m) {
   m.impl("flash_attention_wrapper", &flash_attention_wrapper);
 }
-*/
 
 TORCH_LIBRARY_IMPL(flash_attention, CUDA, m) {
   m.impl("flash_attention_wrapper", &flash_attention_wrapper);
