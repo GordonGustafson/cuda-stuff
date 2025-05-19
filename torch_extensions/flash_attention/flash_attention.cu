@@ -253,7 +253,7 @@ torch::Tensor flash_attention_wrapper(torch::Tensor Q, torch::Tensor K, torch::T
 TORCH_LIBRARY(flash_attention, m) {
    // Note that "float" in the schema corresponds to the C++ double type
    // and the Python float type.
-   m.def("flash_attention_wrapper(Tensor a, Tensor b, Tensor c) -> Tensor");
+   m.def("flash_attention_wrapper(Tensor Q, Tensor K, Tensor V) -> Tensor");
  }
 
 TORCH_LIBRARY_IMPL(flash_attention, CPU, m) {
