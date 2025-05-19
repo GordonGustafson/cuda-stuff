@@ -1,7 +1,6 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
 #include <limits>
-#include <iostream>
 #include <cmath>
 #include <algorithm>
 
@@ -174,11 +173,6 @@ void call_flash_attention_kernel(float const* const Q,  // size Mxd
     int const B_r = min(CEIL_DIV(maxSharedMemory, 4 * d * sizeof(float)), (unsigned long)d);
     int const T_r = CEIL_DIV(M, B_r);
 
-    std::cout << "maxSharedMemory: " << maxSharedMemory << std::endl;
-    std::cout << "B_c: " << B_c << std::endl;
-    std::cout << "B_r: " << B_r << std::endl;
-    std::cout << "T_r: " << T_r << std::endl;
-
     float* row_sum_HBM;
     gpuErrchk(cudaMalloc((void**)&row_sum_HBM, M * sizeof(float)));
     float* row_max_HBM;
@@ -198,13 +192,6 @@ void call_flash_attention_kernel(float const* const Q,  // size Mxd
     dim3 const threadsPerBlock(B_c);
     flash_attention_kernel<<<blocksPerGrid, threadsPerBlock, maxSharedMemory>>>(Q, K, V, output, M, N, d, temperature, row_sum_HBM, row_max_HBM, maxSharedMemory);
     gpuErrchk(cudaPeekAtLastError());
-
-    float* rowSum = new float[M]();
-    float* rowMax = new float[M]();
-    gpuErrchk(cudaMemcpy(rowSum, row_sum_HBM, M * sizeof(float), cudaMemcpyDeviceToHost));
-    gpuErrchk(cudaMemcpy(rowMax, row_max_HBM, M * sizeof(float), cudaMemcpyDeviceToHost));
-    std::cout << "rowSum[0]: " << rowSum[0] << std::endl;
-    std::cout << "rowMax[0]: " << rowMax[0] << std::endl;
 
     delete[] zeroFloats;
     delete[] negativeInfinityFloats;

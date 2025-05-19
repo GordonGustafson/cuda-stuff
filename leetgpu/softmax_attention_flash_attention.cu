@@ -148,11 +148,6 @@ void solve(float const* const Q,  // size Mxd
     int const B_r = min(CEIL_DIV(maxSharedMemory, 4 * d * sizeof(float)), (unsigned long)d);
     int const T_r = CEIL_DIV(M, B_r);
 
-    std::cout << "maxSharedMemory: " << maxSharedMemory << std::endl;
-    std::cout << "B_c: " << B_c << std::endl;
-    std::cout << "B_r: " << B_r << std::endl;
-    std::cout << "T_r: " << T_r << std::endl;
-
     float* row_sum_HBM;
     gpuErrchk(cudaMalloc((void**)&row_sum_HBM, M * sizeof(float)));
     float* row_max_HBM;
