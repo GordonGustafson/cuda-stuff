@@ -205,7 +205,7 @@ void call_flash_attention_kernel(float const* const Q,  // size Mxd
     gpuErrchk(cudaPeekAtLastError());
 
     float* rowSum = new float[M]();
-    gpuErrchk(cudaMemcpy(rowSum, row_sum_HBM, cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(rowSum, row_sum_HBM, M * sizeof(float), cudaMemcpyDeviceToHost));
     std::cout << "rowSum[0]: " << row_sum_HBM[0] << std::endl;
     std::cout << "rowMax[0]: " << row_max_HBM[0] << std::endl;
 
