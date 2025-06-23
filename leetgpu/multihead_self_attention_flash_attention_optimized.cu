@@ -84,6 +84,13 @@ __global__ void causal_multihead_self_attention_kernel(float const* const __rest
             O_float4[B_r_index * (O_row_length/4) + d_index] = zero_float4;
         }
     }
+    for (int d_index = (d_head / 4) * 4 + threadIdx.x; d_index < d_head; d_index += blockDim.x) {
+        for (int B_r_index = threadIdx.y; B_r_index < B_r_bounds_checked_for_last_row; B_r_index += blockDim.y) {
+            int const row_index = blockIdx.x * B_r + B_r_index;
+            Q[B_r_index * Q_row_length + d_index] = Q_HBM[row_index * d_model + d_min_for_head + d_index];
+            O[B_r_index * O_row_length + d_index] = 0.0f;
+        }
+    }
 
     float S_row_old_global_sum[NUM_ROWS_PER_THREAD];
     float S_row_old_global_max[NUM_ROWS_PER_THREAD];
@@ -113,6 +120,13 @@ __global__ void causal_multihead_self_attention_kernel(float const* const __rest
                 int const row_index = T_c_index * B_c + B_c_index;
                 K_float4[B_c_index * (K_row_length / 4) + d_index] = K_HBM_float4[row_index * (d_model / 4) + (d_min_for_head / 4) + d_index];
                 V_float4[B_c_index * (d_head / 4) + d_index] = V_HBM_float4[row_index * (d_model / 4) + (d_min_for_head / 4) + d_index];
+            }
+        }
+        for (int d_index = (d_head / 4) * 4 + threadIdx.x; d_index < d_head; d_index += blockDim.x) {
+            for (int B_c_index = threadIdx.y; B_c_index < B_c_bounds_checked_for_last_column; B_c_index += blockDim.y) {
+                int const row_index = T_c_index * B_c + B_c_index;
+                K[B_c_index * K_row_length + d_index] = K_HBM[row_index * d_model + d_min_for_head + d_index];
+                V[B_c_index * d_head + d_index] = V_HBM[row_index * d_model + d_min_for_head + d_index];
             }
         }
 
@@ -159,7 +173,6 @@ __global__ void causal_multihead_self_attention_kernel(float const* const __rest
 
             if (reg_tile_top_row_shm_in_bounds && reg_tile_bottom_left_unmasked) {
                 // Compute S.
-                #pragma unroll
                 for (int d_index = 0; d_index < d_head / 4; d_index++) {
                     float4 Q_reg_float4[NUM_ROWS_PER_THREAD];
                     #pragma unroll
@@ -177,6 +190,23 @@ __global__ void causal_multihead_self_attention_kernel(float const* const __rest
                             S_registers[S_reg_row][S_reg_col] += Q_reg_float4[S_reg_row].x * K_reg_float4.x;
                             S_registers[S_reg_row][S_reg_col] += Q_reg_float4[S_reg_row].y * K_reg_float4.y;
                             S_registers[S_reg_row][S_reg_col] += Q_reg_float4[S_reg_row].z * K_reg_float4.z;
+                        }
+                    }
+                }
+                for (int d_index = (d_head / 4) * 4; d_index < d_head; d_index++) {
+                    float Q_reg[NUM_ROWS_PER_THREAD];
+                    #pragma unroll
+                    for (int S_reg_row = 0; S_reg_row < NUM_ROWS_PER_THREAD; S_reg_row++) {
+                        Q_reg[S_reg_row] = Q[(reg_tile_top_row_shm + S_reg_row) * Q_row_length + d_index];
+                    }
+
+                    #pragma unroll
+                    for (int S_reg_col = 0; S_reg_col < NUM_COLS_PER_THREAD; S_reg_col++) {
+                        int const S_col_shm = reg_tile_left_column_shm + S_reg_col;
+                        float const K_reg = K[S_col_shm * K_row_length + d_index];
+                        #pragma unroll
+                        for (int S_reg_row = 0; S_reg_row < NUM_ROWS_PER_THREAD; S_reg_row++) {
+                            S_registers[S_reg_row][S_reg_col] += Q_reg[S_reg_row] * K_reg;
                         }
                     }
                 }
@@ -335,6 +365,13 @@ __global__ void causal_multihead_self_attention_kernel(float const* const __rest
         for (int B_r_index = threadIdx.y; B_r_index < B_r_bounds_checked_for_last_row; B_r_index += blockDim.y) {
             int const row_index = blockIdx.x * B_r + B_r_index;
             O_HBM_float4[row_index * (d_model / 4) + (d_min_for_head / 4) + d_index] = O_float4[B_r_index * (O_row_length/4) + d_index];
+
+        }
+    }
+    for (int d_index = (d_head / 4) * 4 + threadIdx.x; d_index < d_head; d_index += blockDim.x) {
+        for (int B_r_index = threadIdx.y; B_r_index < B_r_bounds_checked_for_last_row; B_r_index += blockDim.y) {
+            int const row_index = blockIdx.x * B_r + B_r_index;
+            O_HBM[row_index * d_model + d_min_for_head + d_index] = O[B_r_index * O_row_length + d_index];
         }
     }
 }
@@ -382,3 +419,54 @@ void solve(float const* const Q,  // size Nxd
 }
 
 
+int main() {
+    int const N = 16;
+    int const d_model = 16;
+    int const num_heads = 16;
+    int const d_head = d_model / num_heads;
+
+    int QNumBytes = N * d_model * sizeof(float);
+    int KNumBytes = N * d_model * sizeof(float);
+    int VNumBytes = N * d_model * sizeof(float);
+    int ONumBytes = N * d_model * sizeof(float);
+
+    float* Q;
+    float* K;
+    float* V;
+    float* O;
+    gpuErrchk(cudaMalloc((void**)&Q, QNumBytes));
+    gpuErrchk(cudaMalloc((void**)&K, KNumBytes));
+    gpuErrchk(cudaMalloc((void**)&V, VNumBytes));
+    gpuErrchk(cudaMalloc((void**)&O, ONumBytes));
+
+    float* ones = new float[N*d_model]();
+    for (int row = 0; row < N; row++) {
+        for (int col = 0; col < d_model; col++) {
+            ones[row * d_model + col] = 1.0f;
+        }
+    }
+
+
+    float* identity = new float[N*d_model]();
+    for (int diagonal = 0; diagonal < N; diagonal++) {
+        identity[diagonal * d_model + diagonal] = 1.0f;
+    }
+
+
+    gpuErrchk(cudaMemcpy(Q, ones, QNumBytes, cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(K, ones, KNumBytes, cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(V, identity, VNumBytes, cudaMemcpyHostToDevice));
+
+    solve(Q, K, V, O, N, d_model, num_heads);
+    cudaDeviceSynchronize();
+
+    float* O_host = new float[N*d_model]();
+    gpuErrchk(cudaMemcpy(O_host, O, ONumBytes, cudaMemcpyDeviceToHost));
+
+    for (int row = 0; row < N; row++) {
+        for (int col = 0; col < d_model; col++) {
+            std::cout << O_host[row * d_model + col] << " ";
+        }
+        std::cout << std::endl;
+    }
+}
