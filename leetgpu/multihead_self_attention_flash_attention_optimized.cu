@@ -318,8 +318,10 @@ __global__ void multihead_self_attention_kernel(float const* const __restrict__ 
                     for (int O_reg_row = 0; O_reg_row < NUM_ROWS_PER_THREAD; O_reg_row++) {
                         #pragma unroll
                         for (int O_reg_col = 0; O_reg_col < NUM_COLS_PER_THREAD; O_reg_col++) {
-                            int const OIndexForThread = (reg_tile_top_row_shm + O_reg_row) * O_row_length + d_index + O_reg_col;
-                            O[OIndexForThread] = (O[OIndexForThread] * expf(S_row_old_global_max[O_reg_row] - S_row_new_global_max[O_reg_row]) * S_row_old_global_sum[O_reg_row] + O_registers[O_reg_row][O_reg_col]) / S_row_new_global_sum[O_reg_row];
+                            if (d_index + O_reg_col < d_head) {
+                                int const OIndexForThread = (reg_tile_top_row_shm + O_reg_row) * O_row_length + d_index + O_reg_col;
+                                O[OIndexForThread] = (O[OIndexForThread] * expf(S_row_old_global_max[O_reg_row] - S_row_new_global_max[O_reg_row]) * S_row_old_global_sum[O_reg_row] + O_registers[O_reg_row][O_reg_col]) / S_row_new_global_sum[O_reg_row];
+                            }
                         }
                     }
                 }
