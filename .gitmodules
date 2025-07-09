@@ -1,0 +1,3 @@
+[submodule "leetgpu-thunderkittens/ThunderKittens"]
+	path = leetgpu-thunderkittens/ThunderKittens
+	url = https://github.com/HazyResearch/ThunderKittens.git
